@@ -82,24 +82,25 @@ def home(lib):
     lib.register("react-grid-layout", "grid", default_export="GridLayout")
     code_root_path = Path("/home/cscott/foss4g/tethysapp-standard_app")
     user = lib.hooks.use_user()
-    code_language, set_code_language = lib.hooks.use_state("text")
-    code_path, set_code_path = lib.hooks.use_state(None)
     tree_data = lib.hooks.use_memo(lambda: directory_to_dict(code_root_path))
     editor_code, set_editor_code = lib.hooks.use_state(None)
     show_toast, set_show_toast = lib.hooks.use_state(False)
+    open_files, set_open_files = lib.hooks.use_state([])
+    active_file, set_active_file = lib.hooks.use_state(None)
 
     def save_code():
         set_show_toast(True)
-        code_path.write_text(editor_code)
+        active_file.write_text(editor_code)
         lib.utils.background_execute(lambda: set_show_toast(False), delay_seconds=2)
 
     def handle_name_click(e):
         if e.nodeData.type == "directory": return
         if not any(e.nodeData.name.endswith(x) for x in SUFFIX_TO_LANGUAGE.keys()): return
         file_path = node_path_to_actual_path(code_root_path, tree_data, e.nodeData.path)
-        set_code_path(file_path)
-        set_editor_code(file_path.read_text())
-        set_code_language(SUFFIX_TO_LANGUAGE[file_path.suffix])
+        if file_path.resolve() in [f.resolve() for f in open_files]:
+            set_active_file(file_path)
+        else:
+            set_open_files(open_files + [file_path])
 
     return lib.tethys.Display(
         lib.html.div(style=lib.Style(position="absolute", right=0, left=0, top="50px"))(
@@ -117,13 +118,46 @@ def home(lib):
                 lib.tree.FolderTree(data=tree_data, showCheckbox=False, onNameClick=handle_name_click),
             ),
             lib.bs.Col(
-                lib.me.Editor(
-                    height="70vh",
-                    language=code_language,
-                    value=editor_code or "",
-                    onChange=lambda v, _: set_editor_code(v),
-                ),
-            ),
+                lib.bs.TabContainer(
+                    defaultActiveKey="test123", 
+                    _id="open-file-tabs",
+                )(
+                    lib.bs.Nav(variant="tabs")(
+                        lib.bs.NavItem(
+                            lib.bs.NavLink(
+                                key="test123",
+                                eventKey="test123", 
+                            )("Test 123")
+                        ),
+                        *[
+                            lib.bs.NavItem(
+                                lib.bs.NavLink(
+                                    key='tab-' + str(f.resolve()),
+                                    eventKey=str(f.resolve()),
+                                )(f.name)
+                            ) for f in open_files
+                        ]
+                    ),
+                    lib.bs.TabContent(
+                        lib.bs.TabPane(
+                            eventKey="test123"
+                        )("TEST CONTENT"),
+                        *[
+                            lib.bs.TabPane(
+                                key='content-' + str(f.resolve()), 
+                                eventKey=str(f.resolve()), 
+                            )(
+                                lib.me.Editor(
+                                    height="70vh",
+                                    language=SUFFIX_TO_LANGUAGE[f.suffix],
+                                    value=f.read_text(),
+                                    # onChange=lambda v, _: set_editor_code(v),
+                                )
+                            ) for f in open_files
+                        ]
+                    )
+                )
+            )
         )
     )
 
