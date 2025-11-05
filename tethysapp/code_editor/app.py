@@ -1,4 +1,14 @@
 from tethys_sdk.components import ComponentBase
+from django.views.decorators.clickjacking import xframe_options_sameorigin
+from tethys_apps.base.page_handler import global_page_controller
+from pathlib import Path
+
+SUFFIX_TO_LANGUAGE = {
+    '.py': 'python',
+    '.html': 'html',
+    '.js': 'javascript',
+    '.css': 'css'
+}
 
 
 class App(ComponentBase):
@@ -69,48 +79,49 @@ def node_path_to_actual_path(code_root_path, data_tree, node_path):
 def home(lib):
     lib.register('@monaco-editor/react', 'me', default_export="Editor")
     lib.register("react-folder-tree", "tree", styles=["https://esm.sh/react-folder-tree/dist/style.css"], default_export="FolderTree")
+    lib.register("react-grid-layout", "grid", default_export="GridLayout")
     code_root_path = Path("/home/cscott/foss4g/tethysapp-standard_app")
     user = lib.hooks.use_user()
-    code_language, set_code_language = lib.hooks.use_state("python")
+    code_language, set_code_language = lib.hooks.use_state("text")
+    code_path, set_code_path = lib.hooks.use_state(None)
     tree_data = lib.hooks.use_memo(lambda: directory_to_dict(code_root_path))
-    default_code_path = lib.hooks.use_resources().path / "default_code.py"
-    default_code = lib.hooks.use_memo(lambda: default_code_path.read_text(), [])
-    user_code, set_user_code = lib.hooks.use_state(None)
-    uuid, set_uuid = lib.hooks.use_state(str(uuid4()))
-    render_code = ""
+    editor_code, set_editor_code = lib.hooks.use_state(None)
+    show_toast, set_show_toast = lib.hooks.use_state(False)
+
+    def save_code():
+        set_show_toast(True)
+        code_path.write_text(editor_code)
+        lib.utils.background_execute(lambda: set_show_toast(False), delay_seconds=2)
 
     def handle_name_click(e):
         if e.nodeData.type == "directory": return
-        if not any(e.nodeData.name.endswith(x) for x in ['.py', '.js', '.html', '.css']): return
+        if not any(e.nodeData.name.endswith(x) for x in SUFFIX_TO_LANGUAGE.keys()): return
         file_path = node_path_to_actual_path(code_root_path, tree_data, e.nodeData.path)
-        set_user_code(file_path.read_text())
-        if file_path.suffix == '.py':
-            set_code_language("python")
-        elif file_path.suffix == '.js':
-            set_code_language("javascript")
-        elif file_path.suffix == '.html':
-            set_code_language("html")
-        else:
-            set_code_language("css")
+        set_code_path(file_path)
+        set_editor_code(file_path.read_text())
+        set_code_language(SUFFIX_TO_LANGUAGE[file_path.suffix])
 
     return lib.tethys.Display(
-        lib.bs.Row(
-            lib.bs.Button(
-                on_click=lambda _: update_preview(),
-            )(
-                "Render"
+        lib.html.div(style=lib.Style(position="absolute", right=0, left=0, top="50px"))(
+            lib.bs.Toast(show=show_toast)(
+                lib.bs.ToastBody("Save successful!"),
             )
         ),
         lib.bs.Row(
-            lib.bs.Col(
+            lib.bs.Button(
+                on_click=lambda _: save_code(),
+            )("Save")
+        ),
+        lib.bs.Row(
+            lib.bs.Col(xs=3, sm=3, md=3, lg=3, xl=3, xxl=3)(
                 lib.tree.FolderTree(data=tree_data, showCheckbox=False, onNameClick=handle_name_click),
             ),
             lib.bs.Col(
                 lib.me.Editor(
                     height="70vh",
-                    defaultLanguage=code_language,
-                    value=render_code,
-                    onChange=lambda v, _: set_user_code(v),
+                    language=code_language,
+                    value=editor_code or "",
+                    onChange=lambda v, _: set_editor_code(v),
                 ),
             ),
         )
