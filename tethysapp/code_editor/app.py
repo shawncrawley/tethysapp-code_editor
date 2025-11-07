@@ -2,14 +2,19 @@ from tethys_sdk.components import ComponentBase
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from tethys_apps.base.page_handler import global_page_controller
 from pathlib import Path
+from reactpy import event
 
 SUFFIX_TO_LANGUAGE = {
     '.py': 'python',
     '.html': 'html',
     '.js': 'javascript',
-    '.css': 'css'
+    '.css': 'css',
+    '.gitkeep': None,
+    '.gitignore': None,
+    '': 'text'
 }
 
+TEST_APP_ROOT = r'C:\Users\Shawn.Crawley\Code\foss_dev\tethys_apps\tethysapp-delete_after_this'
 
 class App(ComponentBase):
     """
@@ -75,32 +80,88 @@ def node_path_to_actual_path(code_root_path, data_tree, node_path):
 
     return(fpath)
 
+@App.page(layout=None)
+def test_bs_tabs(lib):
+    key, set_key = lib.hooks.use_state('home')
+    return lib.bs.Tabs(
+        id="controlled-tab-example",
+        activeKey=key,
+        transition=False,
+        onSelect=lambda k: print(k),
+        className="mb-3",
+    )(
+        lib.bs.Tab(eventKey="home", title="Home")(
+            "Tab content for Home"
+        ),
+        lib.bs.Tab(eventKey="profile", title="Profile")(
+            "Tab content for Profile"
+        ),
+        lib.bs.Tab(eventKey="contact", title="Contact")(
+            "Tab content for Contact"
+        ),
+    )
+
+@App.page
+def test_chakra_tabs(lib):
+    tab_index, set_tab_index = lib.hooks.use_state(0)
+    return lib.chakra.Tabs(index=tab_index, onChange=lambda i: set_tab_index(i))(
+      lib.chakra.TabList(
+        lib.chakra.Tab("One"),
+        lib.chakra.Tab("Two"),
+        lib.chakra.Tab("Three"),
+      ),
+
+      lib.chakra.TabPanels(
+        lib.chakra.TabPanel(
+          lib.html.p("one!")
+        ),
+        lib.chakra.TabPanel(
+          lib.html.p("two!")
+        ),
+        lib.chakra.TabPanel(
+          lib.html.p("three!")
+        ),
+      )
+    )
+
 @App.page
 def home(lib):
+    lib.register("react-icons", "icon", treat_as_path="all")
     lib.register('@monaco-editor/react', 'me', default_export="Editor")
     lib.register("react-folder-tree", "tree", styles=["https://esm.sh/react-folder-tree/dist/style.css"], default_export="FolderTree")
     lib.register("react-grid-layout", "grid", default_export="GridLayout")
-    code_root_path = Path("/home/cscott/foss4g/tethysapp-standard_app")
-    user = lib.hooks.use_user()
+    code_root_path = Path(TEST_APP_ROOT)
     tree_data = lib.hooks.use_memo(lambda: directory_to_dict(code_root_path))
-    editor_code, set_editor_code = lib.hooks.use_state(None)
+    open_code_map, set_open_code_map = lib.hooks.use_state({})
     show_toast, set_show_toast = lib.hooks.use_state(False)
     open_files, set_open_files = lib.hooks.use_state([])
     active_file, set_active_file = lib.hooks.use_state(None)
+    active_tab_index, set_active_tab_index = lib.hooks.use_state(0)
 
     def save_code():
         set_show_toast(True)
-        active_file.write_text(editor_code)
+        active_file.write_text(open_code_map[str(active_file.resolve())])
         lib.utils.background_execute(lambda: set_show_toast(False), delay_seconds=2)
 
-    def handle_name_click(e):
+    def handle_file_tree_click(e):
         if e.nodeData.type == "directory": return
         if not any(e.nodeData.name.endswith(x) for x in SUFFIX_TO_LANGUAGE.keys()): return
         file_path = node_path_to_actual_path(code_root_path, tree_data, e.nodeData.path)
-        if file_path.resolve() in [f.resolve() for f in open_files]:
-            set_active_file(file_path)
+        set_active_file(file_path)
+        if file_path in open_files:
+            new_active_tab_index = open_files.index(file_path)
         else:
-            set_open_files(open_files + [file_path])
+            new_open_files = open_files + [file_path]
+            set_open_files(new_open_files)
+            new_active_tab_index = len(new_open_files) - 1
+        set_active_tab_index(new_active_tab_index)
+    
+    def handle_close_file(f):
+        close_index = open_files.index(f)
+        new_open_files = [i for i in open_files if i.resolve() != f.resolve()]
+        set_open_files(new_open_files)
+        if close_index == active_tab_index:
+            set_active_tab_index(0)
 
     return lib.tethys.Display(
         lib.html.div(style=lib.Style(position="absolute", right=0, left=0, top="50px"))(
@@ -115,43 +176,33 @@ def home(lib):
         ),
         lib.bs.Row(
             lib.bs.Col(xs=3, sm=3, md=3, lg=3, xl=3, xxl=3)(
-                lib.tree.FolderTree(data=tree_data, showCheckbox=False, onNameClick=handle_name_click),
+                lib.tree.FolderTree(data=tree_data, showCheckbox=False, onNameClick=handle_file_tree_click),
             ),
             lib.bs.Col(
-                lib.bs.TabContainer(
-                    defaultActiveKey="test123", 
-                    _id="open-file-tabs",
+                lib.chakra.Tabs(
+                    variant='enclosed-colored',
+                    index=active_tab_index, 
+                    onChange=lambda i: set_active_tab_index(i)
                 )(
-                    lib.bs.Nav(variant="tabs")(
-                        lib.bs.NavItem(
-                            lib.bs.NavLink(
-                                key="test123",
-                                eventKey="test123", 
-                            )("Test 123")
-                        ),
+                    lib.chakra.TabList(
                         *[
-                            lib.bs.NavItem(
-                                lib.bs.NavLink(
-                                    key='tab-' + str(f.resolve()),
-                                    eventKey=str(f.resolve()),
-                                )(f.name)
+                            lib.chakra.Tab(
+                                f.name,
+                                lib.html.span(style=lib.Style(width="3px")),
+                                lib.html.span(
+                                    on_click=(lambda _f: event(lambda _: handle_close_file(_f), stop_propagation=True, prevent_default=True))(f)
+                                )(lib.icon.bs.BsXCircleFill())
                             ) for f in open_files
                         ]
                     ),
-                    lib.bs.TabContent(
-                        lib.bs.TabPane(
-                            eventKey="test123"
-                        )("TEST CONTENT"),
+                    lib.chakra.TabPanels(
                         *[
-                            lib.bs.TabPane(
-                                key='content-' + str(f.resolve()), 
-                                eventKey=str(f.resolve()), 
-                            )(
+                            lib.chakra.TabPanel(
                                 lib.me.Editor(
-                                    height="70vh",
+                                    height="calc(100vh - 100px)",
                                     language=SUFFIX_TO_LANGUAGE[f.suffix],
-                                    value=f.read_text(),
-                                    # onChange=lambda v, _: set_editor_code(v),
+                                    value=open_code_map[str(f.resolve())] if str(f.resolve()) in open_code_map else f.read_text(),
+                                    onChange=(lambda _f: lambda v, _: set_open_code_map(open_code_map | {str(f.resolve()): v}))(f),
                                 )
                             ) for f in open_files
                         ]
@@ -160,4 +211,3 @@ def home(lib):
             )
         )
     )
-
